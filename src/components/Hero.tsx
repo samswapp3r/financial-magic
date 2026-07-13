@@ -122,10 +122,10 @@ function FloatingCard({
   className?: string;
   children: React.ReactNode;
   delay?: number;
-  mouse: { mx: ReturnType<typeof useMotionValue>; my: ReturnType<typeof useMotionValue> };
+  mouse: { mx: MotionValue<number>; my: MotionValue<number> };
 }) {
-  const tx = useTransform(mouse.mx, (v) => v * depth);
-  const ty = useTransform(mouse.my, (v) => v * depth);
+  const tx = useTransform(mouse.mx, (v: number) => v * depth);
+  const ty = useTransform(mouse.my, (v: number) => v * depth);
   const sx = useSpring(tx, { stiffness: 60, damping: 15 });
   const sy = useSpring(ty, { stiffness: 60, damping: 15 });
   return (
