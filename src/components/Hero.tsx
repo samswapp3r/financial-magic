@@ -320,7 +320,7 @@ export function Hero() {
 
         {/* RIGHT: interactive dashboard mock */}
         <div className="relative lg:col-span-6 xl:col-span-6">
-          <div className="relative mx-auto aspect-[4/5] w-full max-w-[560px] sm:aspect-[5/6]">
+          <div className="relative mx-auto h-[620px] w-full max-w-[560px] sm:h-[680px]">
             {/* Central big card */}
             <motion.div
               initial={{ opacity: 0, y: 40, rotateX: 12 }}
