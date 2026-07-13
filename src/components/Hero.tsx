@@ -40,33 +40,8 @@ function LiveMoney({ base, perSecond }: { base: number; perSecond: number }) {
 }
 
 /* -------------------- Rolling digit column -------------------- */
-function Digit({ d }: { d: number }) {
-  return (
-    <span className="relative inline-block h-[1em] w-[0.6em] overflow-hidden align-middle leading-none tabular-nums">
-      <motion.span
-        className="absolute left-0 top-0 flex flex-col leading-none"
-        animate={{ y: `-${d}em` }}
-        transition={{ type: "spring", stiffness: 120, damping: 20 }}
-      >
-        {Array.from({ length: 10 }).map((_, i) => (
-          <span key={i} className="block h-[1em] leading-none text-center">
-            {i}
-          </span>
-        ))}
-      </motion.span>
-    </span>
-  );
-}
-
 function RollingNumber({ value }: { value: number }) {
-  const str = NUM.format(Math.max(0, Math.floor(value)));
-  return (
-    <span className="inline-flex items-baseline leading-none tabular-nums">
-      {str.split("").map((ch, i) =>
-        /\d/.test(ch) ? <Digit key={i} d={Number(ch)} /> : <span key={i} className="inline-block w-[0.28em]" />,
-      )}
-    </span>
-  );
+  return <span className="tabular-nums">{NUM.format(Math.max(0, Math.floor(value)))}</span>;
 }
 
 /* -------------------- Mini sparkline -------------------- */
