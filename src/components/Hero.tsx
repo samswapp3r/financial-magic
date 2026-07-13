@@ -403,7 +403,7 @@ export function Hero() {
             <FloatingCard mouse={{ mx, my }} x={68} y={-2} depth={35} delay={0.55}>
               <div className="w-[200px] rounded-2xl border border-accent/40 bg-surface-elevated/90 p-4 shadow-card backdrop-blur-xl">
                 <div className="text-[10px] uppercase tracking-widest text-accent">Adómegtakarítás</div>
-                <div className="mt-1 font-display text-3xl text-gradient">
+                <div className="mt-1 font-mono text-3xl font-medium text-gradient-emerald">
                   <RollingNumber value={4_284_000} />
                 </div>
                 <div className="text-xs text-muted-foreground">Ft · Q3 optimalizálás</div>
