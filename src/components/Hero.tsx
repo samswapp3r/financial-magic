@@ -361,8 +361,9 @@ export function Hero() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs uppercase tracking-widest text-muted-foreground">Q3 · Cash flow</div>
-                  <div className="mt-1 font-display text-3xl text-foreground">
-                    <RollingNumber value={liveNumber} /> <span className="text-lg text-muted-foreground">Ft</span>
+                  <div className="mt-1 flex items-baseline gap-1.5 font-mono text-3xl font-medium text-foreground">
+                    <RollingNumber value={liveNumber} />
+                    <span className="text-lg text-muted-foreground">Ft</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary">
