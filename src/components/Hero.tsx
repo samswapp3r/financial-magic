@@ -364,8 +364,8 @@ export function Hero() {
             </motion.div>
 
             {/* Floating cards */}
-            <FloatingCard mouse={{ mx, my }} x={-8} y={2} depth={-30} delay={0.4}>
-              <div className="w-[210px] rounded-2xl border border-border/70 bg-surface-elevated/90 p-4 shadow-card backdrop-blur-xl">
+            <FloatingCard mouse={{ mx, my }} x={-14} y={44} depth={-30} delay={0.4}>
+              <div className="w-[210px] rounded-2xl border border-border/70 bg-surface-elevated/95 p-4 shadow-card backdrop-blur-xl">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="grid h-6 w-6 place-items-center rounded-md bg-primary/20 text-primary">✓</span>
                   NAV feladva
@@ -375,10 +375,10 @@ export function Hero() {
               </div>
             </FloatingCard>
 
-            <FloatingCard mouse={{ mx, my }} x={68} y={-2} depth={35} delay={0.55}>
-              <div className="w-[200px] rounded-2xl border border-accent/40 bg-surface-elevated/90 p-4 shadow-card backdrop-blur-xl">
+            <FloatingCard mouse={{ mx, my }} x={72} y={38} depth={35} delay={0.55}>
+              <div className="w-[210px] rounded-2xl border border-accent/40 bg-surface-elevated/95 p-4 shadow-card backdrop-blur-xl">
                 <div className="text-[10px] uppercase tracking-widest text-accent">Adómegtakarítás</div>
-                <div className="mt-1 font-mono text-3xl font-medium text-gradient-emerald">
+                <div className="mt-1 font-mono text-3xl font-semibold text-primary">
                   <RollingNumber value={4_284_000} />
                 </div>
                 <div className="text-xs text-muted-foreground">Ft · Q3 optimalizálás</div>
