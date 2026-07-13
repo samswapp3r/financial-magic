@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion, useMotionValue, useSpring, useTransform, animate } from "motion/react";
+import { motion, useMotionValue, useSpring, useTransform, animate, type MotionValue } from "motion/react";
 
 /* -------------------- Utilities -------------------- */
 const HUF = new Intl.NumberFormat("hu-HU", {
