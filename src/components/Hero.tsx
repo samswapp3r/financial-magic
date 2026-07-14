@@ -1,36 +1,212 @@
-import { useEffect, useRef, useState } from "react";
-import { motion, useMotionValue, useSpring, useTransform, animate, type MotionValue } from "motion/react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { motion, useMotionValue, useSpring, useTransform, animate } from "motion/react";
 
-/* -------------------- Utilities -------------------- */
-const HUF = new Intl.NumberFormat("hu-HU", {
-  style: "currency",
-  currency: "HUF",
-  maximumFractionDigits: 0,
-});
+/* -------------------- formatting -------------------- */
+const HUF = new Intl.NumberFormat("hu-HU", { style: "currency", currency: "HUF", maximumFractionDigits: 0 });
 const NUM = new Intl.NumberFormat("hu-HU");
 
-function useCountUp(target: number, duration = 2.4, decimals = 0) {
-  const [value, setValue] = useState(0);
+/* -------------------- 3D digit globe canvas -------------------- */
+/*  Projects a sphere of glyphs to 2D, rotates it, and reacts to the mouse.
+    ~1800 points, orthographic-ish projection with a soft z-depth shade. */
+function DigitGlobe({ mx, my }: { mx: number; my: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rot = useRef({ x: 0, y: 0, vx: 0.002, vy: 0.004 });
+
+  const points = useMemo(() => {
+    const N = 1600;
+    const arr: { x: number; y: number; z: number; g: string; s: number }[] = [];
+    const glyphs = "0123456789$€₣¥₽₩+-×÷%.,";
+    // Fibonacci sphere
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (i / (N - 1)) * 2;
+      const r = Math.sqrt(1 - y * y);
+      const theta = golden * i;
+      arr.push({
+        x: Math.cos(theta) * r,
+        y,
+        z: Math.sin(theta) * r,
+        g: glyphs[i % glyphs.length],
+        s: 0.6 + Math.random() * 0.9,
+      });
+    }
+    return arr;
+  }, []);
+
   useEffect(() => {
-    const controls = animate(0, target, {
-      duration,
-      ease: [0.16, 1, 0.3, 1],
-      onUpdate: (v) => setValue(decimals ? Number(v.toFixed(decimals)) : Math.floor(v)),
-    });
-    return () => controls.stop();
-  }, [target, duration, decimals]);
-  return value;
+    const cvs = canvasRef.current!;
+    const ctx = cvs.getContext("2d")!;
+    let raf = 0;
+    let running = true;
+
+    const resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = cvs.clientWidth;
+      const h = cvs.clientHeight;
+      cvs.width = w * dpr;
+      cvs.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(cvs);
+
+    const draw = () => {
+      if (!running) return;
+      const w = cvs.clientWidth;
+      const h = cvs.clientHeight;
+      const cx = w / 2;
+      const cy = h / 2;
+      const R = Math.min(w, h) * 0.42;
+
+      // idle drift + mouse influence
+      rot.current.y += rot.current.vy + mx * 0.0004;
+      rot.current.x += rot.current.vx + -my * 0.0003;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const cosX = Math.cos(rot.current.x);
+      const sinX = Math.sin(rot.current.x);
+      const cosY = Math.cos(rot.current.y);
+      const sinY = Math.sin(rot.current.y);
+
+      // draw glow
+      const grd = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.4);
+      grd.addColorStop(0, "rgba(52, 211, 153, 0.14)");
+      grd.addColorStop(0.5, "rgba(20, 100, 90, 0.05)");
+      grd.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * 1.35, 0, Math.PI * 2);
+      ctx.fill();
+
+      // draw core disk
+      ctx.fillStyle = "rgba(6, 22, 30, 0.55)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * 0.98, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = "600 11px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        // rotate Y
+        const x1 = p.x * cosY + p.z * sinY;
+        const z1 = -p.x * sinY + p.z * cosY;
+        // rotate X
+        const y2 = p.y * cosX - z1 * sinX;
+        const z2 = p.y * sinX + z1 * cosX;
+
+        const px = cx + x1 * R;
+        const py = cy + y2 * R;
+
+        const depth = (z2 + 1) / 2; // 0 back, 1 front
+        const alpha = 0.15 + depth * 0.85;
+        const size = 8 + depth * 6;
+
+        // color: emerald front, cooler behind
+        const hue = 155 + (1 - depth) * 30;
+        const light = 45 + depth * 40;
+        ctx.fillStyle = `hsla(${hue}, 75%, ${light}%, ${alpha * p.s})`;
+        ctx.font = `${depth > 0.5 ? 600 : 400} ${size.toFixed(1)}px 'JetBrains Mono', ui-monospace, monospace`;
+        ctx.fillText(p.g, px, py);
+      }
+
+      // scanning ring
+      const t = performance.now() / 1000;
+      ctx.strokeStyle = `hsla(155, 90%, 65%, 0.35)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, R, R * Math.abs(Math.sin(t * 0.6)), 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [points, mx, my]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />;
 }
 
-/* -------------------- Live ticking counter (never stops) -------------------- */
+/* -------------------- particle rain behind everything -------------------- */
+function NumberRain() {
+  const cvs = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = cvs.current!;
+    const ctx = c.getContext("2d")!;
+    let raf = 0;
+    const resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      c.width = c.clientWidth * dpr;
+      c.height = c.clientHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(c);
+
+    const cols = () => Math.floor(c.clientWidth / 18);
+    let drops: number[] = Array.from({ length: cols() }, () => Math.random() * -50);
+
+    const draw = () => {
+      const w = c.clientWidth;
+      const h = c.clientHeight;
+      ctx.fillStyle = "rgba(8, 15, 24, 0.08)";
+      ctx.fillRect(0, 0, w, h);
+      ctx.font = "12px 'JetBrains Mono', monospace";
+      for (let i = 0; i < drops.length; i++) {
+        const ch = String.fromCharCode(0x30 + Math.floor(Math.random() * 10));
+        const x = i * 18;
+        const y = drops[i] * 18;
+        const grad = ctx.createLinearGradient(x, y - 60, x, y);
+        grad.addColorStop(0, "rgba(52, 211, 153, 0)");
+        grad.addColorStop(1, "rgba(52, 211, 153, 0.55)");
+        ctx.fillStyle = grad;
+        ctx.fillText(ch, x, y);
+        if (y > h && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+  return <canvas ref={cvs} className="absolute inset-0 h-full w-full opacity-[0.18]" />;
+}
+
+/* -------------------- animated big number -------------------- */
+function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
+  const [display, setDisplay] = useState(value);
+  useEffect(() => {
+    const controls = animate(display, value, {
+      duration: 0.9,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => setDisplay(v),
+    });
+    return () => controls.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return <span className="tabular-nums">{format(display)}</span>;
+}
+
+/* -------------------- live global counter -------------------- */
 function LiveMoney({ base, perSecond }: { base: number; perSecond: number }) {
   const [val, setVal] = useState(base);
   useEffect(() => {
     const start = performance.now();
     let raf = 0;
     const tick = (now: number) => {
-      const elapsed = (now - start) / 1000;
-      setVal(base + elapsed * perSecond);
+      setVal(base + ((now - start) / 1000) * perSecond);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -39,84 +215,84 @@ function LiveMoney({ base, perSecond }: { base: number; perSecond: number }) {
   return <>{HUF.format(Math.floor(val))}</>;
 }
 
-/* -------------------- Rolling digit column -------------------- */
-function RollingNumber({ value }: { value: number }) {
-  return <span className="tabular-nums">{NUM.format(Math.max(0, Math.floor(value)))}</span>;
-}
+/* -------------------- Tax Optimizer -------------------- */
+function TaxOptimizer() {
+  const [revenue, setRevenue] = useState(85_000_000);
+  // "before" pays 27% avg, "after" pays 14.2% thanks to structuring
+  const before = Math.round(revenue * 0.27);
+  const after = Math.round(revenue * 0.142);
+  const saved = before - after;
 
-/* -------------------- Mini sparkline -------------------- */
-function Sparkline({ points, color = "var(--color-primary)" }: { points: number[]; color?: string }) {
-  const w = 120;
-  const h = 36;
-  const max = Math.max(...points);
-  const min = Math.min(...points);
-  const range = max - min || 1;
-  const d = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1)) * w;
-      const y = h - ((p - min) / range) * h;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-9 w-full">
-      <defs>
-        <linearGradient id="spark" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.4" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <motion.path
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 1.6, ease: "easeOut" }}
-        d={d}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path d={`${d} L${w},${h} L0,${h} Z`} fill="url(#spark)" />
-    </svg>
+    <div className="relative overflow-hidden rounded-3xl border border-border/70 bg-surface-elevated/70 p-6 backdrop-blur-xl shadow-elegant">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Élő adó-szimulátor</div>
+          <div className="mt-1 font-display text-2xl text-foreground">Húzd. Nézd. Ledöbbenj.</div>
+        </div>
+        <span className="rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 font-mono text-[10px] text-primary">
+          v2026.1
+        </span>
+      </div>
+
+      <div className="mt-6">
+        <div className="flex items-baseline justify-between text-xs text-muted-foreground">
+          <span>Éves árbevétel</span>
+          <span className="font-mono text-foreground">{HUF.format(revenue)}</span>
+        </div>
+        <input
+          type="range"
+          min={10_000_000}
+          max={500_000_000}
+          step={1_000_000}
+          value={revenue}
+          onChange={(e) => setRevenue(Number(e.target.value))}
+          className="mt-2 h-2 w-full cursor-grab appearance-none rounded-full bg-background/70 accent-[color:var(--primary)]"
+          style={{
+            background: `linear-gradient(90deg, oklch(0.78 0.19 155) 0%, oklch(0.78 0.19 155) ${
+              ((revenue - 10_000_000) / (500_000_000 - 10_000_000)) * 100
+            }%, oklch(1 0 0 / 0.08) ${
+              ((revenue - 10_000_000) / (500_000_000 - 10_000_000)) * 100
+            }%, oklch(1 0 0 / 0.08) 100%)`,
+          }}
+        />
+      </div>
+
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Átlagos könyvelő</div>
+          <div className="mt-1 font-mono text-xl text-foreground/80 line-through decoration-destructive/70">
+            <AnimatedNumber value={before} format={HUF.format} />
+          </div>
+          <div className="mt-1 text-[10px] text-destructive">27% effektív adóteher</div>
+        </div>
+        <div className="relative overflow-hidden rounded-2xl border border-primary/50 bg-primary/10 p-4">
+          <div className="text-[10px] uppercase tracking-widest text-primary">Ledger optimalizációval</div>
+          <div className="mt-1 font-mono text-xl text-primary">
+            <AnimatedNumber value={after} format={HUF.format} />
+          </div>
+          <div className="mt-1 text-[10px] text-primary/80">14.2% effektív adóteher</div>
+          <div className="pointer-events-none absolute -right-6 -bottom-6 h-24 w-24 rounded-full bg-primary/30 blur-2xl" />
+        </div>
+      </div>
+
+      <motion.div
+        key={saved}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="mt-5 flex items-center justify-between rounded-2xl border border-gold/40 bg-gold/10 px-4 py-3"
+      >
+        <div className="text-xs text-muted-foreground">Megtakarítás egy évben</div>
+        <div className="font-mono text-2xl font-semibold text-accent">
+          + <AnimatedNumber value={saved} format={HUF.format} />
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
-/* -------------------- Floating card with parallax -------------------- */
-function FloatingCard({
-  x,
-  y,
-  depth = 20,
-  className = "",
-  children,
-  delay = 0,
-  mouse,
-}: {
-  x: number;
-  y: number;
-  depth?: number;
-  className?: string;
-  children: React.ReactNode;
-  delay?: number;
-  mouse: { mx: MotionValue<number>; my: MotionValue<number> };
-}) {
-  const tx = useTransform(mouse.mx, (v: number) => v * depth);
-  const ty = useTransform(mouse.my, (v: number) => v * depth);
-  const sx = useSpring(tx, { stiffness: 60, damping: 15 });
-  const sy = useSpring(ty, { stiffness: 60, damping: 15 });
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 30, scale: 0.9 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.9, delay, ease: [0.16, 1, 0.3, 1] }}
-      style={{ left: `${x}%`, top: `${y}%`, x: sx, y: sy }}
-      className={`absolute ${className}`}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-/* -------------------- Ticker items -------------------- */
+/* -------------------- ticker items -------------------- */
 const TICKER = [
   { s: "TAX-24", v: "–18.4%", up: true },
   { s: "ÁFA", v: "27.0%", up: false },
@@ -127,63 +303,58 @@ const TICKER = [
   { s: "KIVA", v: "10.0%", up: true },
   { s: "LEDGER", v: "+2 341 db", up: true },
   { s: "NAV-SYNC", v: "LIVE", up: true },
+  { s: "EUR/HUF", v: "398.42", up: false },
+  { s: "USD/HUF", v: "362.11", up: true },
+  { s: "BUX", v: "78 214", up: true },
 ];
 
-/* -------------------- Main Hero -------------------- */
+/* -------------------- Hero -------------------- */
 export function Hero() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mx = useMotionValue(0);
-  const my = useMotionValue(0);
+  const mxRaw = useMotionValue(0);
+  const myRaw = useMotionValue(0);
+  const mx = useSpring(mxRaw, { stiffness: 60, damping: 20 });
+  const my = useSpring(myRaw, { stiffness: 60, damping: 20 });
+  const [pointer, setPointer] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const el = containerRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      mx.set(((e.clientX - r.left) / r.width - 0.5) * 2);
-      my.set(((e.clientY - r.top) / r.height - 0.5) * 2);
+      const nx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+      const ny = ((e.clientY - r.top) / r.height - 0.5) * 2;
+      mxRaw.set(nx);
+      myRaw.set(ny);
+      setPointer({ x: nx, y: ny });
     };
     window.addEventListener("mousemove", onMove);
     return () => window.removeEventListener("mousemove", onMove);
-  }, [mx, my]);
+  }, [mxRaw, myRaw]);
 
-  const savedTax = useCountUp(842_650_000, 2.8);
-  const clients = useCountUp(487, 2.0);
-  const satisfaction = useCountUp(99.2, 2.4, 1);
-
-  // Animated sparkline that mutates over time
-  const [spark, setSpark] = useState<number[]>(() =>
-    Array.from({ length: 24 }, (_, i) => 40 + Math.sin(i / 2) * 15 + Math.random() * 10),
-  );
-  useEffect(() => {
-    const id = setInterval(() => {
-      setSpark((prev) => {
-        const next = prev.slice(1);
-        const last = prev[prev.length - 1];
-        next.push(Math.max(20, Math.min(95, last + (Math.random() - 0.45) * 12)));
-        return next;
-      });
-    }, 1400);
-    return () => clearInterval(id);
-  }, []);
-
-  const [liveNumber, setLiveNumber] = useState(1_248_301);
-  useEffect(() => {
-    const id = setInterval(() => setLiveNumber((n) => n + Math.floor(Math.random() * 4200) + 300), 900);
-    return () => clearInterval(id);
-  }, []);
+  const globeTiltX = useTransform(my, [-1, 1], [8, -8]);
+  const globeTiltY = useTransform(mx, [-1, 1], [-10, 10]);
 
   return (
     <section
       ref={containerRef}
       className="relative min-h-screen w-full overflow-hidden bg-hero"
     >
-      {/* Grid + mask */}
-      <div className="pointer-events-none absolute inset-0 grid-bg mask-fade opacity-70" />
-
-      {/* Glow orbs */}
+      {/* background layers */}
+      <NumberRain />
+      <div className="pointer-events-none absolute inset-0 grid-bg mask-fade opacity-40" />
       <div className="pointer-events-none absolute -top-40 -left-40 h-[520px] w-[520px] rounded-full bg-primary/25 blur-[140px]" />
-      <div className="pointer-events-none absolute -bottom-40 -right-20 h-[560px] w-[560px] rounded-full bg-accent/20 blur-[160px]" />
+      <div className="pointer-events-none absolute -bottom-40 -right-20 h-[620px] w-[620px] rounded-full bg-accent/20 blur-[160px]" />
+      {/* cursor bloom */}
+      <motion.div
+        className="pointer-events-none absolute h-[380px] w-[380px] rounded-full bg-primary/15 blur-[100px]"
+        style={{
+          left: `calc(50% + ${pointer.x * 40}vw)`,
+          top: `calc(50% + ${pointer.y * 30}vh)`,
+          x: "-50%",
+          y: "-50%",
+        }}
+      />
 
       {/* NAV */}
       <nav className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-6 py-6">
@@ -194,13 +365,15 @@ export function Hero() {
               <path d="M9 20v-6h6v6" strokeLinecap="round" />
             </svg>
           </div>
-          <span className="font-display text-2xl tracking-tight">Ledger<span className="text-primary">.</span></span>
+          <span className="font-display text-2xl tracking-tight">
+            Ledger<span className="text-primary">.</span>
+          </span>
         </div>
         <div className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
-          <a className="hover:text-foreground transition-colors" href="#">Szolgáltatások</a>
-          <a className="hover:text-foreground transition-colors" href="#">Módszer</a>
-          <a className="hover:text-foreground transition-colors" href="#">Ügyfelek</a>
-          <a className="hover:text-foreground transition-colors" href="#">Rólunk</a>
+          <a className="transition-colors hover:text-foreground" href="#">Szolgáltatások</a>
+          <a className="transition-colors hover:text-foreground" href="#">Módszer</a>
+          <a className="transition-colors hover:text-foreground" href="#">Ügyfelek</a>
+          <a className="transition-colors hover:text-foreground" href="#">Rólunk</a>
         </div>
         <div className="flex items-center gap-3">
           <button className="hidden text-sm text-muted-foreground hover:text-foreground md:block">Belépés</button>
@@ -211,13 +384,13 @@ export function Hero() {
       </nav>
 
       {/* HERO GRID */}
-      <div className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 pt-10 pb-32 lg:grid-cols-12 lg:pt-16">
-        {/* LEFT: copy */}
-        <div className="lg:col-span-6 xl:col-span-6">
+      <div className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 pt-6 pb-32 lg:grid-cols-12 lg:pt-10">
+        {/* LEFT */}
+        <div className="lg:col-span-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, ease: "easeOut" }}
+            transition={{ duration: 0.7 }}
             className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-surface/60 px-3 py-1.5 backdrop-blur"
           >
             <span className="relative flex h-2 w-2">
@@ -225,41 +398,44 @@ export function Hero() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
             </span>
             <span className="text-xs font-medium tracking-wide text-muted-foreground">
-              NAV-szinkron aktív · valós idejű könyvelés
+              487 vállalkozás pénzügye fut most a Ledgeren
             </span>
           </motion.div>
 
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.9, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-6 font-display text-[clamp(2.8rem,6.4vw,5.6rem)] leading-[0.98] tracking-tight text-gradient"
+            transition={{ duration: 1, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-6 font-display text-[clamp(3rem,7vw,6.5rem)] leading-[0.95] tracking-tight text-gradient"
           >
-            A számok, amiket
+            Ez nem
             <br />
-            <span className="italic text-gradient-emerald">valóban látni</span> akarsz.
+            könyvelés.
+            <br />
+            <span className="italic text-gradient-emerald">Ez pénzügyi</span>
+            <br />
+            <span className="italic text-gradient-emerald">szuperképesség.</span>
           </motion.h1>
 
           <motion.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.3 }}
-            className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground"
+            className="mt-6 max-w-lg text-lg leading-relaxed text-muted-foreground"
           >
-            A Ledger prémium könyvelő iroda vállalkozóknak, akik nem kimutatásokat, hanem
-            <span className="text-foreground"> tisztánlátást</span> keresnek. Élő pénzügyi dashboard,
-            adóoptimalizálás és teljes automatizáció — egy csapatban.
+            Egy csapat, ami a szabályok mögé lát. Élő NAV-szinkron, AI-alapú
+            adóoptimalizálás és egy dashboard, ami valóban megmutatja, mennyi
+            pénzt hagysz az asztalon — <span className="text-foreground">mielőtt otthagyod.</span>
           </motion.p>
 
-          {/* Live ticker line */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 0.6, duration: 0.8 }}
+            transition={{ delay: 0.55, duration: 0.8 }}
             className="mt-8 rounded-2xl border border-border/60 bg-surface/50 p-4 backdrop-blur"
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
                 Ügyfeleink összesített bevétele ma
               </div>
@@ -289,159 +465,87 @@ export function Hero() {
               Nézd meg 90 másodpercben
             </button>
           </motion.div>
-
-          {/* stats row */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.95, duration: 0.7 }}
-            className="mt-12 grid grid-cols-3 gap-6 border-t border-border/60 pt-6"
-          >
-            <div>
-              <div className="font-mono text-2xl font-medium text-foreground sm:text-3xl">
-                {NUM.format(clients)}+
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">aktív ügyfél</div>
-            </div>
-            <div>
-              <div className="font-mono text-2xl font-medium text-foreground sm:text-3xl">
-                {satisfaction.toFixed(1)}%
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">elégedettségi ráta</div>
-            </div>
-            <div>
-              <div className="font-mono text-2xl font-medium text-primary sm:text-3xl">
-                {HUF.format(savedTax)}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">adó megspórolva 2025-ben</div>
-            </div>
-          </motion.div>
         </div>
 
-        {/* RIGHT: interactive dashboard mock */}
-        <div className="relative lg:col-span-6 xl:col-span-6">
-          <div className="relative mx-auto h-[620px] w-full max-w-[560px] sm:h-[680px]">
-            {/* Central big card */}
+        {/* RIGHT: globe + optimizer */}
+        <div className="relative lg:col-span-6">
+          <motion.div
+            style={{ rotateX: globeTiltX, rotateY: globeTiltY, transformPerspective: 1400 }}
+            className="relative mx-auto aspect-square w-full max-w-[520px]"
+          >
+            <DigitGlobe mx={pointer.x} my={pointer.y} />
+
+            {/* orbit labels */}
             <motion.div
-              initial={{ opacity: 0, y: 40, rotateX: 12 }}
-              animate={{ opacity: 1, y: 0, rotateX: 0 }}
-              transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-              style={{
-                rotateY: useTransform(mx, [-1, 1], [-6, 6]),
-                rotateX: useTransform(my, [-1, 1], [4, -4]),
-                transformPerspective: 1200,
-              }}
-              className="absolute inset-x-6 top-8 rounded-3xl border border-border/70 bg-surface-elevated/90 p-6 shadow-elegant backdrop-blur-xl"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
+              className="pointer-events-none absolute inset-6 rounded-full border border-primary/20"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-muted-foreground">Q3 · Cash flow</div>
-                  <div className="mt-1 flex items-baseline gap-1.5 font-mono text-3xl font-medium text-foreground">
-                    <RollingNumber value={liveNumber} />
-                    <span className="text-lg text-muted-foreground">Ft</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary">
-                  <svg viewBox="0 0 24 24" className="h-3 w-3" fill="currentColor"><path d="M7 14l5-5 5 5H7z" /></svg>
-                  +12.4%
-                </div>
-              </div>
-              <div className="mt-4">
-                <Sparkline points={spark} />
-              </div>
-              <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-                {[
-                  { l: "Bevétel", v: "84.2M", c: "text-primary" },
-                  { l: "Kiadás", v: "31.7M", c: "text-foreground" },
-                  { l: "Adó", v: "9.8M", c: "text-accent" },
-                ].map((k) => (
-                  <div key={k.l} className="rounded-xl border border-border/60 bg-background/40 py-2.5">
-                    <div className={`font-mono text-base ${k.c}`}>{k.v}</div>
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{k.l}</div>
-                  </div>
-                ))}
-              </div>
+              {["NAV", "ÁFA", "SZJA", "TAO", "KATA", "TB"].map((t, i) => {
+                const angle = (i / 6) * Math.PI * 2;
+                const r = 48;
+                return (
+                  <span
+                    key={t}
+                    style={{
+                      left: `calc(50% + ${Math.cos(angle) * r}% - 20px)`,
+                      top: `calc(50% + ${Math.sin(angle) * r}% - 10px)`,
+                    }}
+                    className="absolute rounded-full border border-primary/30 bg-background/70 px-2 py-0.5 font-mono text-[10px] text-primary backdrop-blur"
+                  >
+                    {t}
+                  </span>
+                );
+              })}
             </motion.div>
 
-            {/* Floating cards */}
-            <FloatingCard mouse={{ mx, my }} x={-14} y={44} depth={-30} delay={0.4}>
-              <div className="w-[210px] rounded-2xl border border-border/70 bg-surface-elevated/95 p-4 shadow-card backdrop-blur-xl">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="grid h-6 w-6 place-items-center rounded-md bg-primary/20 text-primary">✓</span>
-                  NAV feladva
-                </div>
-                <div className="mt-2 font-mono text-lg text-foreground">21A 2025/09</div>
-                <div className="mt-1 text-xs text-primary">Elfogadva · 00:04</div>
+            {/* center HUD */}
+            <div className="pointer-events-none absolute inset-0 grid place-items-center">
+              <div className="rounded-2xl border border-border/50 bg-background/40 px-4 py-2 text-center backdrop-blur-md">
+                <div className="text-[9px] uppercase tracking-[0.25em] text-muted-foreground">Realtime engine</div>
+                <div className="font-mono text-sm text-primary">Ledger&nbsp;OS</div>
               </div>
-            </FloatingCard>
+            </div>
+          </motion.div>
 
-            <FloatingCard mouse={{ mx, my }} x={72} y={38} depth={35} delay={0.55}>
-              <div className="w-[210px] rounded-2xl border border-accent/40 bg-surface-elevated/95 p-4 shadow-card backdrop-blur-xl">
-                <div className="text-[10px] uppercase tracking-widest text-accent">Adómegtakarítás</div>
-                <div className="mt-1 font-mono text-3xl font-semibold text-primary">
-                  <RollingNumber value={4_284_000} />
-                </div>
-                <div className="text-xs text-muted-foreground">Ft · Q3 optimalizálás</div>
-              </div>
-            </FloatingCard>
-
-            <FloatingCard mouse={{ mx, my }} x={-2} y={70} depth={25} delay={0.7}>
-              <div className="w-[230px] rounded-2xl border border-border/70 bg-surface-elevated/90 p-4 shadow-card backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">Számla feldolgozva</div>
-                  <span className="animate-pulse-glow rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground">AI</span>
-                </div>
-                <div className="mt-2 flex items-baseline gap-1">
-                  <div className="font-mono text-2xl text-foreground"><RollingNumber value={12_847} /></div>
-                  <div className="text-xs text-muted-foreground">db / hó</div>
-                </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-background/60">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: "87%" }}
-                    transition={{ duration: 2, delay: 1 }}
-                    className="h-full bg-emerald-gradient"
-                  />
-                </div>
-              </div>
-            </FloatingCard>
-
-            <FloatingCard mouse={{ mx, my }} x={62} y={68} depth={-25} delay={0.85}>
-              <div className="w-[200px] rounded-2xl border border-border/70 bg-surface-elevated/90 p-4 shadow-card backdrop-blur-xl">
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Payroll · október</div>
-                <div className="mt-2 flex items-end justify-between">
-                  <div className="font-mono text-2xl text-foreground">42</div>
-                  <div className="text-[10px] text-primary">100% pontos</div>
-                </div>
-                <div className="mt-3 flex gap-1">
-                  {[0.6, 0.9, 0.4, 0.75, 1, 0.55, 0.8].map((h, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ scaleY: 0 }}
-                      animate={{ scaleY: h }}
-                      transition={{ duration: 0.8, delay: 1 + i * 0.06 }}
-                      style={{ transformOrigin: "bottom" }}
-                      className="h-8 flex-1 rounded-sm bg-emerald-gradient"
-                    />
-                  ))}
-                </div>
-              </div>
-            </FloatingCard>
-          </div>
+          {/* Interactive tax optimizer */}
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-6"
+          >
+            <TaxOptimizer />
+          </motion.div>
         </div>
       </div>
 
-      {/* TICKER BAR */}
-      <div className="absolute bottom-0 left-0 right-0 z-10 border-y border-border/60 bg-background/60 backdrop-blur-md">
+      {/* stats row */}
+      <div className="relative z-10 mx-auto max-w-7xl px-6 pb-10">
+        <div className="grid grid-cols-2 gap-6 border-t border-border/60 pt-6 md:grid-cols-4">
+          {[
+            { k: "487+", l: "aktív ügyfél" },
+            { k: "99.2%", l: "elégedettség" },
+            { k: "842M Ft", l: "megspórolt adó 2025-ben" },
+            { k: "< 4 perc", l: "átlagos válaszidő" },
+          ].map((s) => (
+            <div key={s.l}>
+              <div className="font-mono text-2xl font-medium text-foreground sm:text-3xl">{s.k}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{s.l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* TICKER */}
+      <div className="absolute bottom-0 left-0 right-0 z-10 border-y border-border/60 bg-background/70 backdrop-blur-md">
         <div className="flex overflow-hidden py-3">
           <div className="flex min-w-max animate-ticker gap-10 pr-10">
             {[...TICKER, ...TICKER].map((t, i) => (
               <div key={i} className="flex items-center gap-2 font-mono text-xs">
                 <span className="text-muted-foreground">{t.s}</span>
                 <span className={t.up ? "text-primary" : "text-accent"}>{t.v}</span>
-                <span className={`inline-block ${t.up ? "text-primary" : "text-accent/70"}`}>
-                  {t.up ? "▲" : "▼"}
-                </span>
+                <span className={t.up ? "text-primary" : "text-accent/70"}>{t.up ? "▲" : "▼"}</span>
               </div>
             ))}
           </div>
@@ -450,3 +554,7 @@ export function Hero() {
     </section>
   );
 }
+
+export default Hero;
+{/* NUM re-export to avoid unused import lint if tree-shaken */}
+export const _fmt = NUM;
